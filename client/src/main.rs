@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 
 #[derive(Parser)]
 struct Args {
-    #[clap(short = 't', long = "time", default_value = "2000")]
+    #[clap(short = 't', long = "time", default_value = "10000")]
     time_in_queue: usize,
 
     #[clap(short = 'c', long = "count", default_value = "1000")]
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     let now = Instant::now();
 
     for i in 0..args.count {
-        if i % 100000 == 0 {
+        if i % 10_000 == 0 {
             println!("look at my i {}", i);
         }
 

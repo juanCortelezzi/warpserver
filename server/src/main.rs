@@ -1,19 +1,22 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
+use std::time::Instant;
 use warp::Filter;
 
 #[derive(Debug)]
 pub struct Node {
     pub id: usize,
-    pub duration_as_millis: u128,
+    pub pop_at: Instant,
 }
 
 impl Node {
-    pub fn new(id_counter: IdCounter, duration_as_millis: u128) -> Self {
+    pub fn new(id_counter: IdCounter, pop_at: Instant) -> Self {
         Self {
             id: id_counter.fetch_add(1, Ordering::Relaxed),
-            duration_as_millis,
+            pop_at,
         }
     }
 }
@@ -80,7 +83,7 @@ mod filters {
 mod handlers {
     use std::convert::Infallible;
     use std::sync::atomic::Ordering;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use crate::{IdCounter, Node, Queue};
 
@@ -89,31 +92,24 @@ mod handlers {
         q: Queue,
         id_counter: IdCounter,
     ) -> Result<impl warp::Reply, Infallible> {
-        let duration = Duration::from_millis(time_in_queue);
+        let mut q = q.lock().unwrap();
 
-        tokio::spawn(async move {
-            let id = id_counter.fetch_add(1, Ordering::Relaxed);
-            {
-                q.lock().unwrap().push_back(Node {
-                    id,
-                    duration_as_millis: duration.as_millis(),
-                });
+        let now = Instant::now();
+        while let Some(node) = q.front() {
+            if node.pop_at > now {
+                break;
             }
 
-            tokio::time::sleep(duration).await;
-
-            let mut q = q.lock().unwrap();
-            let node = q.front().expect("inserted node to be in queue");
-
-            assert!(
-                node.id == id,
-                "id should be the same inQueue={} lookingFor={}",
-                node.id,
-                id
-            );
-
             q.pop_front();
-        });
+        }
+
+        let duration = Duration::from_millis(time_in_queue);
+        let pop_at = now + duration;
+        let id = id_counter.fetch_add(1, Ordering::Relaxed);
+
+        q.push_back(Node { id, pop_at });
+
+        println!("added: {id}");
 
         Ok(format!(
             "added item with duration: {}",
@@ -122,8 +118,18 @@ mod handlers {
     }
 
     pub async fn status(q: Queue) -> Result<impl warp::Reply, Infallible> {
-        let queue = q.lock().unwrap();
-        Ok(format!("items in queue: {:?}", queue))
+        let mut queue = q.lock().unwrap();
+
+        let now = Instant::now();
+        while let Some(node) = queue.front() {
+            if node.pop_at > now {
+                break;
+            }
+
+            queue.pop_front();
+        }
+
+        Ok(format!("{:?}", queue.len()))
     }
 }
 
